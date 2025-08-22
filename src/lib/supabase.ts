@@ -1,12 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://demo-supabase-url.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'demo-anon-key';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-console.log('Supabase Config:', { 
+// Validação das variáveis de ambiente
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    'Variáveis de ambiente do Supabase não configuradas. ' +
+    'Verifique se VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY estão definidas no arquivo .env'
+  );
+}
+
+console.log('✅ Supabase configurado:', { 
   url: supabaseUrl, 
   hasAnonKey: !!supabaseAnonKey,
-  anonKeyLength: supabaseAnonKey?.length 
+  anonKeyLength: supabaseAnonKey.length 
 });
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

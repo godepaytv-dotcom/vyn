@@ -16,8 +16,8 @@ interface AuthContextType {
   withdrawRequests: WithdrawRequest[];
   mercadoPagoToken: string;
   loading: boolean;
-  login: (email: string, password: string) => Promise<boolean>;
-  register: (name: string, email: string, password: string, referralCode?: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (name: string, email: string, password: string, referralCode?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   createOrder: (plan: string, price: number, isAnnual: boolean) => Promise<string | undefined>; // Alterado para retornar undefined em caso de erro
   updateOrderStatus: (orderId: string, status: string, accessInfo?: string) => Promise<void>;
@@ -143,45 +143,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, [loadUserProfile]);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    console.log('🔐 Tentativa de login:', { email });
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw error;
-      return true;
+      if (error) {
+        console.error('❌ Erro no login:', error.message);
+        return { success: false, error: error.message };
+      }
+      console.log('✅ Login realizado com sucesso');
+      return { success: true };
     } catch (error) {
-      console.error('Login error:', error);
-      return false;
+      console.error('❌ Erro inesperado no login:', error);
+      return { success: false, error: 'Erro interno. Tente novamente.' };
     }
   };
 
   // CORREÇÃO CRÍTICA: O erro `TypeError` acontecia aqui.
   // O Supabase v3 retorna { data, error }. Se o cadastro falha, `data` é nulo, e `data.user` quebra o código.
   // A verificação correta é primeiro checar o `error`.
-  const register = async (name: string, email: string, password: string, referralCode?: string): Promise<boolean> => {
+  const register = async (name: string, email: string, password: string, referralCode?: string): Promise<{ success: boolean; error?: string }> => {
+    console.log('📝 Tentativa de registro:', { name, email, hasReferralCode: !!referralCode });
     try {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          data: { name } // Passar metadados do usuário na criação
+          data: { name }
         }
       });
 
-      // Verificação correta: primeiro o erro, depois os dados
-      if (error) throw error;
-      if (!data.user) throw new Error("Registration succeeded but no user object was returned.");
-
-      // Lógica de afiliados
-      if (referralCode) {
-        localStorage.setItem('referralCode', referralCode);
-        // O ideal é que o clique seja contado no backend, mas mantendo a lógica original
-        await supabase.rpc('increment_affiliate_clicks', { affiliate_code: referralCode });
+      if (error) {
+        console.error('❌ Erro no registro:', error.message);
+        return { success: false, error: error.message };
+      }
+      
+      if (!data.user) {
+        console.error('❌ Registro falhou: usuário não retornado');
+        return { success: false, error: 'Falha no registro. Tente novamente.' };
       }
 
-      return true;
+      console.log('✅ Usuário registrado com sucesso:', data.user.id);
+      
+      // Processar código de afiliado se fornecido
+      if (referralCode) {
+        console.log('🔗 Processando código de afiliado:', referralCode);
+        localStorage.setItem('referralCode', referralCode);
+        try {
+          await supabase.rpc('increment_affiliate_clicks', { affiliate_code: referralCode });
+          console.log('✅ Clique de afiliado registrado');
+        } catch (affiliateError) {
+          console.warn('⚠️ Erro ao registrar clique de afiliado:', affiliateError);
+        }
+      }
+
+      return { success: true };
     } catch (error) {
-      console.error('Registration error:', error);
-      return false;
+      console.error('❌ Erro inesperado no registro:', error);
+      return { success: false, error: 'Erro interno. Tente novamente.' };
     }
   };
   

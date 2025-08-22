@@ -14,6 +14,7 @@ const Login = () => {
   });
   const [errors, setErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string>('');
   
   const { login, register } = useAuth();
   const navigate = useNavigate();
@@ -31,27 +32,18 @@ const Login = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrors([]);
+    setErrorMessage('');
     setIsLoading(true);
 
-    console.log('📋 Dados do formulário:', { 
-      isLogin, 
-      email: formData.email, 
-      name: formData.name,
-      passwordLength: formData.password.length 
-    });
     try {
       if (isLogin) {
-        console.log('🔐 Iniciando processo de login...');
-        const success = await login(formData.email, formData.password);
-        if (success) {
-          console.log('✅ Login realizado, redirecionando...');
+        const result = await login(formData.email, formData.password);
+        if (result.success) {
           navigate('/dashboard');
         } else {
-          console.log('❌ Login falhou');
-          setErrors(['Email ou senha inválidos.']);
+          setErrorMessage(result.error || 'Erro no login');
         }
       } else {
-        console.log('📝 Iniciando processo de registro...');
         // Validation for registration
         const newErrors: string[] = [];
         
@@ -68,24 +60,20 @@ const Login = () => {
         }
 
         if (newErrors.length > 0) {
-          console.log('❌ Erros de validação:', newErrors);
           setErrors(newErrors);
           setIsLoading(false);
           return;
         }
 
         const referralCode = localStorage.getItem('tempReferralCode');
-        console.log('🔗 Código de referência:', referralCode);
         
-        const success = await register(formData.name, formData.email, formData.password, referralCode);
+        const result = await register(formData.name, formData.email, formData.password, referralCode);
         
-        if (success) {
-          console.log('✅ Registro realizado, redirecionando...');
+        if (result.success) {
           localStorage.removeItem('tempReferralCode');
           navigate('/dashboard');
         } else {
-          console.log('❌ Registro falhou');
-          setErrors(['Este email já está cadastrado.']);
+          setErrorMessage(result.error || 'Erro no registro');
         }
       }
     } catch (error) {
@@ -100,6 +88,10 @@ const Login = () => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value
+    });
+    // Limpar mensagens de erro quando o usuário começar a digitar
+    if (errorMessage) {
+      setErrorMessage('');
     });
     // Clear errors when user starts typing
     if (errors.length > 0) {
@@ -127,17 +119,21 @@ const Login = () => {
           </div>
 
           {/* Error Messages */}
-          {errors.length > 0 && (
+          {(errors.length > 0 || errorMessage) && (
             <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
               <div className="flex items-center space-x-2">
                 <AlertCircle className="h-5 w-5 text-red-500" />
                 <span className="text-red-700 font-medium">Erro:</span>
               </div>
-              <ul className="mt-2 text-sm text-red-600">
-                {errors.map((error, index) => (
-                  <li key={index}>• {error}</li>
-                ))}
-              </ul>
+              {errorMessage ? (
+                <p className="mt-2 text-sm text-red-600">• {errorMessage}</p>
+              ) : (
+                <ul className="mt-2 text-sm text-red-600">
+                  {errors.map((error, index) => (
+                    <li key={index}>• {error}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 
@@ -266,6 +262,7 @@ const Login = () => {
                 onClick={() => {
                   setIsLogin(!isLogin);
                   setErrors([]);
+                  setErrorMessage('');
                   setFormData({
                     name: '',
                     email: '',
