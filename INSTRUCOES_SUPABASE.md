@@ -70,6 +70,11 @@ CREATE POLICY "Users can update own profile" ON profiles
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
+  -- Verificar se o perfil já existe para evitar duplicatas
+  IF EXISTS (SELECT 1 FROM public.profiles WHERE id = new.id) THEN
+    RETURN new;
+  END IF;
+  
   INSERT INTO public.profiles (id, name, email, role, created_at, updated_at)
   VALUES (
     new.id,
@@ -79,7 +84,19 @@ BEGIN
     now(),
     now()
   );
+  
+  -- Log para debug (opcional)
+  RAISE NOTICE 'Perfil criado para usuário: %', new.email;
+  
   RETURN new;
+EXCEPTION
+  WHEN unique_violation THEN
+    -- Se já existe, apenas retorna sem erro
+    RETURN new;
+  WHEN OTHERS THEN
+    -- Log do erro mas não falha o registro
+    RAISE NOTICE 'Erro ao criar perfil para %: %', new.email, SQLERRM;
+    RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -144,7 +161,14 @@ Após seguir todas as instruções acima, teste o sistema:
 
 ### Erro: "User not found in profiles table"
 - **Causa**: Trigger de sincronização não funcionando
-- **Solução**: Execute novamente os comandos da Seção 3
+- **Solução**: Execute novamente os comandos da Seção 3 e verifique se o trigger está ativo
+
+### Erro: "Usuário consegue criar conta mas não consegue logar"
+- **Causa**: Perfil não foi criado automaticamente ou há delay na sincronização
+- **Solução**: 
+  1. Verifique se o trigger está funcionando: `SELECT * FROM information_schema.triggers WHERE trigger_name = 'on_auth_user_created';`
+  2. Se necessário, execute manualmente: `SELECT public.handle_new_user();`
+  3. Verifique se existem perfis órfãos: `SELECT * FROM auth.users WHERE id NOT IN (SELECT id FROM public.profiles);`
 
 ### Erro: "Invalid API key"
 - **Causa**: Variáveis de ambiente incorretas

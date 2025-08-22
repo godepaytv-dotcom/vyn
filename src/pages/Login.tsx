@@ -39,8 +39,10 @@ const Login = () => {
       if (isLogin) {
         const result = await login(formData.email, formData.password);
         if (result.success) {
+          console.log('✅ Login bem-sucedido, redirecionando...');
           navigate('/dashboard');
         } else {
+          console.error('❌ Falha no login:', result.error);
           setErrorMessage(result.error || 'Erro no login');
         }
       } else {
@@ -70,9 +72,20 @@ const Login = () => {
         const result = await register(formData.name, formData.email, formData.password, referralCode);
         
         if (result.success) {
+          console.log('✅ Registro bem-sucedido, redirecionando...');
           localStorage.removeItem('tempReferralCode');
-          navigate('/dashboard');
+          
+          // Aguardar um pouco antes de redirecionar para garantir que o perfil foi criado
+          setTimeout(() => {
+            navigate('/dashboard');
+          }, 1500);
+          
+          setErrorMessage('');
+          // Mostrar mensagem de sucesso temporária
+          const successMsg = 'Conta criada com sucesso! Redirecionando...';
+          setErrorMessage('');
         } else {
+          console.error('❌ Falha no registro:', result.error);
           setErrorMessage(result.error || 'Erro no registro');
         }
       }

@@ -86,18 +86,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loadUserProfile = useCallback(async (supabaseUser: User) => {
     setLoading(true);
     try {
-      const { data: profile, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', supabaseUser.id)
-        .single();
-
-      if (error || !profile) {
-        throw error || new Error('Profile not found.');
-      }
+      console.log('👤 Carregando perfil do usuário:', supabaseUser.id);
       
+      // Tentar carregar o perfil com retry
+      let profile = null;
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (!profile && attempts < maxAttempts) {
+        attempts++;
+        console.log(`🔄 Tentativa ${attempts} de carregar perfil...`);
+        
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', supabaseUser.id)
+          .single();
+
+        if (data) {
+          profile = data;
+          break;
+        }
+
+        if (error && !error.message.includes('No rows')) {
+          console.error('❌ Erro ao carregar perfil:', error.message);
+          break;
+        }
+
+        // Se não encontrou o perfil, aguardar e tentar novamente
+        if (attempts < maxAttempts) {
+          console.log('⏳ Perfil não encontrado, aguardando...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      // Se ainda não encontrou o perfil, criar um
+      if (!profile) {
+        console.log('🔧 Criando perfil ausente...');
+        const newProfile = {
+          id: supabaseUser.id,
+          name: supabaseUser.user_metadata?.name || supabaseUser.email?.split('@')[0] || 'Usuário',
+          email: supabaseUser.email || '',
+          role: 'client' as const,
+          affiliate_code: `REF${supabaseUser.id.substring(0, 8).toUpperCase()}`,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        const { data: createdProfile, error: createError } = await supabase
+          .from('profiles')
+          .insert(newProfile)
+          .select()
+          .single();
+
+        if (createError) {
+          console.error('❌ Erro ao criar perfil ausente:', createError.message);
+          throw createError;
+        }
+
+        profile = createdProfile;
+        console.log('✅ Perfil criado com sucesso');
+      }
+
       const authUser: AuthUser = { ...profile, supabaseUser };
       setUser(authUser);
+      console.log('✅ Perfil carregado:', { id: profile.id, name: profile.name, role: profile.role });
 
       if (profile.role === 'admin') {
         await loadAdminData();
@@ -106,9 +159,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     } catch (error) {
       console.error('Error loading user profile:', error);
-      // Se não carregar o perfil, desloga para evitar estado inconsistente
-      await supabase.auth.signOut();
-      setUser(null);
+      
+      // Só desloga se for um erro crítico, não se for apenas perfil ausente
+      if (error instanceof Error && !error.message.includes('Profile not found')) {
+        console.log('🚪 Deslogando devido a erro crítico');
+        await supabase.auth.signOut();
+        setUser(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -165,11 +222,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (name: string, email: string, password: string, referralCode?: string): Promise<{ success: boolean; error?: string }> => {
     console.log('📝 Tentativa de registro:', { name, email, hasReferralCode: !!referralCode });
     try {
+      // Primeiro, verificar se o usuário já existe
+      const { data: existingUser } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('email', email)
+        .single();
+
+      if (existingUser) {
+        console.error('❌ Email já cadastrado');
+        return { success: false, error: 'Este email já está cadastrado. Tente fazer login.' };
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          data: { name }
+          data: { name },
+          emailRedirectTo: undefined // Desabilita redirecionamento por email
         }
       });
 
@@ -185,6 +255,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       console.log('✅ Usuário registrado com sucesso:', data.user.id);
       
+      // Criar perfil manualmente se não existir (fallback)
+      try {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert({
+            id: data.user.id,
+            name: name,
+            email: email,
+            role: 'client',
+            affiliate_code: `REF${data.user.id.substring(0, 8).toUpperCase()}`,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (profileError && !profileError.message.includes('duplicate key')) {
+          console.warn('⚠️ Erro ao criar perfil:', profileError.message);
+        } else {
+          console.log('✅ Perfil criado com sucesso');
+        }
+      } catch (profileError) {
+        console.warn('⚠️ Erro ao criar perfil (fallback):', profileError);
+      }
+
       // Processar código de afiliado se fornecido
       if (referralCode) {
         console.log('🔗 Processando código de afiliado:', referralCode);
@@ -196,6 +289,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('⚠️ Erro ao registrar clique de afiliado:', affiliateError);
         }
       }
+
+      // Aguardar um pouco para garantir que o perfil foi criado
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
       return { success: true };
     } catch (error) {
