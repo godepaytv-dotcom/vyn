@@ -92,7 +92,7 @@ const Login = () => {
     // Limpar mensagens de erro quando o usuário começar a digitar
     if (errorMessage) {
       setErrorMessage('');
-    });
+    }
     // Clear errors when user starts typing
     if (errors.length > 0) {
       setErrors([]);
@@ -262,7 +262,6 @@ const Login = () => {
                 onClick={() => {
                   setIsLogin(!isLogin);
                   setErrors([]);
-                  setErrorMessage('');
                   setFormData({
                     name: '',
                     email: '',
