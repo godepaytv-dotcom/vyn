@@ -134,6 +134,239 @@ VITE_SUPABASE_ANON_KEY=sua-chave-anonima-aqui
 
 ---
 
+## 🗄️ SEÇÃO 7: CRIAÇÃO DAS TABELAS ADICIONAIS DO SISTEMA
+
+Após executar o script básico acima, você precisa criar as tabelas adicionais para o sistema funcionar completamente.
+
+### Execute este script SQL adicional:
+
+```sql
+-- TABELA DE PEDIDOS (ORDERS)
+-- Armazena todos os pedidos de hospedagem dos clientes
+CREATE TABLE public.orders (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_name text NOT NULL,
+  user_email text NOT NULL,
+  plan text NOT NULL,
+  price decimal(10,2) NOT NULL,
+  status text DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'completed', 'cancelled')),
+  payment_id text,
+  access_info text,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Habilitar RLS na tabela orders
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+
+-- Políticas para orders
+CREATE POLICY "Users can read their own orders" ON public.orders
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Admins can read all orders" ON public.orders
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+CREATE POLICY "Admins can update orders" ON public.orders
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- TABELA DE AFILIADOS (AFFILIATES)
+-- Armazena informações dos afiliados e suas estatísticas
+CREATE TABLE public.affiliates (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_name text NOT NULL,
+  code text NOT NULL UNIQUE,
+  clicks integer DEFAULT 0,
+  conversions integer DEFAULT 0,
+  balance decimal(10,2) DEFAULT 0,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Habilitar RLS na tabela affiliates
+ALTER TABLE public.affiliates ENABLE ROW LEVEL SECURITY;
+
+-- Políticas para affiliates
+CREATE POLICY "Users can read their own affiliate data" ON public.affiliates
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Admins can read all affiliates" ON public.affiliates
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- TABELA DE INDICAÇÕES (REFERRALS)
+-- Armazena o histórico de indicações dos afiliados
+CREATE TABLE public.referrals (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  affiliate_id uuid NOT NULL REFERENCES public.affiliates(id) ON DELETE CASCADE,
+  referred_name text NOT NULL,
+  plan text NOT NULL,
+  commission decimal(10,2) NOT NULL,
+  order_id uuid NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Habilitar RLS na tabela referrals
+ALTER TABLE public.referrals ENABLE ROW LEVEL SECURITY;
+
+-- Políticas para referrals
+CREATE POLICY "Users can read their own referrals" ON public.referrals
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.affiliates 
+      WHERE id = affiliate_id AND user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Admins can read all referrals" ON public.referrals
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- TABELA DE SOLICITAÇÕES DE SAQUE (WITHDRAW_REQUESTS)
+-- Armazena as solicitações de saque dos afiliados
+CREATE TABLE public.withdraw_requests (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_name text NOT NULL,
+  amount decimal(10,2) NOT NULL,
+  status text DEFAULT 'pending' CHECK (status IN ('pending', 'paid')),
+  request_date timestamptz DEFAULT now(),
+  paid_date timestamptz
+);
+
+-- Habilitar RLS na tabela withdraw_requests
+ALTER TABLE public.withdraw_requests ENABLE ROW LEVEL SECURITY;
+
+-- Políticas para withdraw_requests
+CREATE POLICY "Users can read their own withdraw requests" ON public.withdraw_requests
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Admins can read all withdraw requests" ON public.withdraw_requests
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+CREATE POLICY "Admins can update withdraw requests" ON public.withdraw_requests
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- TABELA DE CONFIGURAÇÕES (SETTINGS)
+-- Armazena configurações do sistema como tokens de API
+CREATE TABLE public.settings (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  key text NOT NULL UNIQUE,
+  value text NOT NULL,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+-- Habilitar RLS na tabela settings
+ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
+
+-- Políticas para settings (apenas admins)
+CREATE POLICY "Only admins can access settings" ON public.settings
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles 
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- FUNÇÃO PARA CRIAR AFILIADO AUTOMATICAMENTE
+-- Cria um registro de afiliado quando um perfil é criado
+CREATE OR REPLACE FUNCTION public.handle_new_profile()
+RETURNS trigger AS $$
+BEGIN
+  -- Criar afiliado automaticamente para todos os usuários
+  INSERT INTO public.affiliates (user_id, user_name, code)
+  VALUES (
+    NEW.id, 
+    NEW.name, 
+    'REF' || UPPER(SUBSTRING(NEW.id::text, 1, 8))
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Trigger para criar afiliado automaticamente
+CREATE OR REPLACE TRIGGER on_profile_created
+  AFTER INSERT ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_profile();
+
+-- INSERIR CONFIGURAÇÕES INICIAIS
+-- Token do Mercado Pago (você deve substituir pelo seu token real)
+INSERT INTO public.settings (key, value) 
+VALUES ('mercado_pago_token', 'TEST-1234567890-123456-abcdef123456789-12345678')
+ON CONFLICT (key) DO NOTHING;
+
+-- CRIAR USUÁRIO ADMIN INICIAL
+-- Inserir perfil admin (o usuário deve ser criado manualmente no painel de autenticação)
+INSERT INTO public.profiles (id, name, email, role, created_at)
+VALUES (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  'Administrador',
+  'admin@vyntrixhost.com',
+  'admin',
+  now()
+) ON CONFLICT (id) DO NOTHING;
+
+-- Comentários nas tabelas
+COMMENT ON TABLE public.orders IS 'Stores customer orders and hosting plans';
+COMMENT ON TABLE public.affiliates IS 'Stores affiliate program data and statistics';
+COMMENT ON TABLE public.referrals IS 'Stores referral history for affiliates';
+COMMENT ON TABLE public.withdraw_requests IS 'Stores affiliate withdrawal requests';
+COMMENT ON TABLE public.settings IS 'Stores system configuration settings';
+```
+
+### ⚠️ **IMPORTANTE - CRIAR USUÁRIO ADMIN:**
+
+Após executar o script acima, você precisa criar o usuário admin manualmente:
+
+1. **Vá para**: `Authentication` → `Users` no painel do Supabase
+2. **Clique em**: `Add user` → `Create new user`
+3. **Preencha**:
+   - **Email**: `admin@vyntrixhost.com`
+   - **Password**: `admin123` (ou uma senha de sua escolha)
+   - **User UID**: `00000000-0000-0000-0000-000000000001`
+4. **Clique em**: `Create user`
+
+### 🔧 **CONFIGURAR TOKEN DO MERCADO PAGO:**
+
+1. **Obtenha seu token** no painel do Mercado Pago
+2. **Execute este SQL** substituindo `SEU_TOKEN_AQUI`:
+
+```sql
+UPDATE public.settings 
+SET value = 'SEU_TOKEN_AQUI' 
+WHERE key = 'mercado_pago_token';
+```
+
+---
+
 ## 🧪 SEÇÃO 5: TESTE DE VALIDAÇÃO
 
 Após seguir todas as instruções acima, teste o sistema:
